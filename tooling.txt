@@ -1,0 +1,7 @@
+Not installed via uv (separate tooling)
+
+PostgreSQL + PostGIS — a database server, not a Python package. Run via Docker (postgis/postgis image) or your OS package manager.
+QGIS — desktop GIS application, installed separately (not a Python dependency for the API itself).
+k6 or Locust — for load testing. k6 is a standalone binary (Go-based, not pip/uv); if you prefer Locust instead, that one is a Python package:   uv add --dev locust
+Prometheus / Grafana — monitoring stack, deployed as services (e.g. via Docker Compose), not Python packages.
+PgBouncer — connection pooler, a standalone service, not a Python package
