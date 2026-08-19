@@ -1,7 +1,7 @@
 [project]
 name = "locus"
 version = "0.1.0"
-description = "Add your description here"
+description = "Reverse-geocode any lat/lon to Kenya's County, Constituency, Ward, Location, and Sub-Location — self-hosted, PostGIS-powered, no third-party API required."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
