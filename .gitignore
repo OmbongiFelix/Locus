@@ -8,3 +8,14 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Environment secrets
+.env
+
+# Data files (large, fetched separately)
+data/
+
+# IDE
+.idea/
+.vscode/
+*.swp

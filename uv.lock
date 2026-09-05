@@ -238,13 +238,14 @@ wheels = [
 [[package]]
 name = "locus"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
     { name = "geopandas" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "redis" },
     { name = "shapely" },
     { name = "uvicorn", extra = ["standard"] },
@@ -264,6 +265,7 @@ requires-dist = [
     { name = "geopandas", specifier = ">=1.1.4" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
+    { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "redis", specifier = ">=8.1.0" },
     { name = "shapely", specifier = ">=2.1.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.4" },
