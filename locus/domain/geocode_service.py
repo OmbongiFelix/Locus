@@ -50,6 +50,7 @@ class GeocodeService:
             county_name=row["county_name"],
             constituency=row["constituency"],
             ward_name=row["ward_name"],
+            sub_county_name=row.get("sub_county_name"), # i added this to support sub-county level reverse geocoding
             location_name=row.get("location_name"),
             sub_location=row.get("sub_location"),
             match_type=match_type,

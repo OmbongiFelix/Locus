@@ -21,6 +21,7 @@ def _row_to_dict(row, distance_m: float = 0.0) -> dict:
         "county_name": row["county_name"],
         "constituency": row["constituency"],
         "ward_name": row["ward_name"],
+        "sub_county_name": row["sub_county_name"], #i added this line to include sub_county_name in the output
         "location_name": row["location_name"],
         "sub_location": row["sub_location"],
         "boundary_version": row["boundary_version"],
@@ -47,7 +48,7 @@ class BoundaryRepository:
         async with get_connection() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT county_name, constituency, ward_name,
+                SELECT county_name, constituency, ward_name, sub_county_name,
                        location_name, sub_location, boundary_version
                   FROM kenya_admin_boundaries
                  WHERE is_current = true
@@ -74,7 +75,7 @@ class BoundaryRepository:
         async with get_connection() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT county_name, constituency, ward_name,
+                SELECT county_name, constituency, ward_name, sub_county_name,
                        location_name, sub_location, boundary_version,
                        ST_Distance(
                            geom::geography,
@@ -124,6 +125,7 @@ class BoundaryRepository:
                        b.county_name,
                        b.constituency,
                        b.ward_name,
+                       b.sub_county_name,  
                        b.location_name,
                        b.sub_location,
                        b.boundary_version

@@ -10,6 +10,7 @@ than per-key invalidation.
 
 from __future__ import annotations
 
+from typing import cast
 import json
 import logging
 
@@ -72,6 +73,7 @@ def _deserialize(data: str) -> GeocodeResult:
         county_name=obj["county_name"],
         constituency=obj["constituency"],
         ward_name=obj["ward_name"],
+        sub_county_name=obj["sub_county_name"],
         location_name=obj["location_name"],
         sub_location=obj["sub_location"],
         match_type=MatchType(obj["match_type"]),
@@ -96,7 +98,7 @@ class GeocodeCache:
         try:
             data = await _redis_client.get(_cache_key(lat, lon))
             if data is not None:
-                return _deserialize(data)
+                return _deserialize(cast(str, data))
         except Exception:
             logger.warning("Cache read failed — proceeding without cache", exc_info=True)
         return None

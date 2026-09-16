@@ -54,12 +54,12 @@ async def publish(boundary_version: str) -> None:
                 WITH moved AS (
                     INSERT INTO kenya_admin_boundaries (
                         geom, county_name, constituency, ward_name,
-                        location_name, sub_location,
+                        sub_county_name, location_name, sub_location,
                         source_dataset, boundary_version,
                         is_current, effective_from
                     )
                     SELECT geom, county_name, constituency, ward_name,
-                           location_name, sub_location,
+                           sub_county_name, location_name, sub_location,
                            source_dataset, boundary_version,
                            true, now()
                       FROM kenya_admin_boundaries_staging

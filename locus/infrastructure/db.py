@@ -1,17 +1,10 @@
-"""
-Async database connection management for PostGIS.
-
-Owns the single asyncpg (or SQLAlchemy async engine) connection pool
-for the whole process. Opened once at app startup (main.py) and
-reused by every request - never opened per-request.
-"""
-
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncGenerator
 
 import asyncpg
+from asyncpg.pool import PoolConnectionProxy
 
 from locus.config import get_settings
 
@@ -19,11 +12,7 @@ _pool: asyncpg.Pool | None = None
 
 
 async def init_db_pool() -> None:
-    """Create the process-wide asyncpg connection pool.
-
-    Called from main.py's startup event.  Pool size and timeout are
-    driven by settings, not hardcoded values.
-    """
+    """Create the process-wide asyncpg connection pool."""
     global _pool
     settings = get_settings()
     _pool = await asyncpg.create_pool(
@@ -43,7 +32,7 @@ async def close_db_pool() -> None:
 
 
 @asynccontextmanager
-async def get_connection() -> AsyncIterator[asyncpg.Connection]:
+async def get_connection() -> AsyncGenerator[PoolConnectionProxy, None]:
     """Borrow a connection from the pool.
 
     Only infrastructure/boundary_repository.py should call this.

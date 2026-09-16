@@ -45,6 +45,7 @@ def _to_response(result) -> GeocodeResponse:
         county_name=result.county_name,
         constituency=result.constituency,
         ward_name=result.ward_name,
+        sub_county_name=result.sub_county_name,
         location_name=result.location_name,
         sub_location=result.sub_location,
         match_type=APIMatchType(result.match_type.value),

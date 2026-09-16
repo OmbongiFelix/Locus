@@ -37,6 +37,7 @@ class GeocodeResponse(BaseModel):
     county_name: str
     constituency: str
     ward_name: str
+    sub_county_name: str | None = None
     location_name: str | None = None
     sub_location: str | None = None
     match_type: MatchType

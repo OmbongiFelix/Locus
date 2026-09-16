@@ -19,6 +19,7 @@ import argparse
 import asyncio
 import logging
 import sys
+from typing import Any, cast
 
 import geopandas as gpd
 from shapely.geometry import MultiPolygon
@@ -48,14 +49,15 @@ def load_and_clean(source_path: str) -> gpd.GeoDataFrame:
         gdf = gdf.to_crs(epsg=4326)
 
     # Topology repair (fix self-intersections / gaps)
-    gdf["geometry"] = gdf["geometry"].apply(
-        lambda g: make_valid(g) if not g.is_valid else g
-    )
+    gdf["geometry"] = cast(Any, [
+    make_valid(g) if not g.is_valid else g for g in gdf["geometry"]
+    ])
 
     # Normalise to MultiPolygon (islands / exclaves)
-    gdf["geometry"] = gdf["geometry"].apply(
-        lambda g: g if isinstance(g, MultiPolygon) else MultiPolygon([g])
-    )
+    gdf["geometry"] = cast(Any, [
+    g if isinstance(g, MultiPolygon) else MultiPolygon([g])
+    for g in gdf["geometry"]
+    ])
 
     return gdf
 
@@ -79,17 +81,18 @@ async def write_to_staging(
                 """
                 INSERT INTO kenya_admin_boundaries_staging (
                     geom, county_name, constituency, ward_name,
-                    location_name, sub_location,
+                    sub_county_name, location_name, sub_location,
                     source_dataset, boundary_version, is_current
                 ) VALUES (
                     ST_Multi(ST_GeomFromText($1, 4326)),
-                    $2, $3, $4, $5, $6, $7, $8, false
+                    $2, $3, $4, $5, $6, $7, $8, $9, false
                 )
                 """,
                 row["geometry"].wkt,
                 row.get("county_name", row.get("COUNTY", "")),
                 row.get("constituency", row.get("CONSTITUEN", "")),
                 row.get("ward_name", row.get("WARD", "")),
+                row.get("sub_county_name", row.get("SUBCOUNTY", None)),
                 row.get("location_name", row.get("LOCATION", None)),
                 row.get("sub_location", row.get("SUBLOC", None)),
                 source_dataset,
