@@ -72,12 +72,37 @@ async def write_to_staging(
     Tags every row with *source_dataset* and *boundary_version*,
     ``is_current`` left ``false``.  Never writes to the live table.
 
+    county_name/constituency/ward_name are electoral boundaries and
+    are expected on every row, so a missing value defaults to ``""``
+    rather than ``None`` — it signals "should be present but isn't"
+    instead of "not applicable." sub_county_name/location_name/
+    sub_location are administrative subdivisions that legitimately
+    vary by source dataset, so a missing value defaults to ``None``.
+
+    All rows are inserted as a single batch inside one transaction —
+    if any row fails, nothing is written, so publish.py can never pick
+    up a partial staging set for this ``boundary_version``.
+
     Returns the number of rows inserted.
     """
-    count = 0
+    records = [
+        (
+            row["geometry"].wkt,
+            row.get("county_name", row.get("COUNTY", "")),
+            row.get("constituency", row.get("CONSTITUEN", "")),
+            row.get("ward_name", row.get("WARD", "")),
+            row.get("sub_county_name", row.get("SUBCOUNTY", None)),
+            row.get("location_name", row.get("LOCATION", None)),
+            row.get("sub_location", row.get("SUBLOC", None)),
+            source_dataset,
+            boundary_version,
+        )
+        for _, row in gdf.iterrows()
+    ]
+
     async with get_connection() as conn:
-        for _, row in gdf.iterrows():
-            await conn.execute(
+        async with conn.transaction():
+            await conn.executemany(
                 """
                 INSERT INTO kenya_admin_boundaries_staging (
                     geom, county_name, constituency, ward_name,
@@ -88,18 +113,9 @@ async def write_to_staging(
                     $2, $3, $4, $5, $6, $7, $8, $9, false
                 )
                 """,
-                row["geometry"].wkt,
-                row.get("county_name", row.get("COUNTY", "")),
-                row.get("constituency", row.get("CONSTITUEN", "")),
-                row.get("ward_name", row.get("WARD", "")),
-                row.get("sub_county_name", row.get("SUBCOUNTY", None)),
-                row.get("location_name", row.get("LOCATION", None)),
-                row.get("sub_location", row.get("SUBLOC", None)),
-                source_dataset,
-                boundary_version,
+                records,
             )
-            count += 1
-    return count
+    return len(records)
 
 
 def main() -> None:
