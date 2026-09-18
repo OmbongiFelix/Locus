@@ -36,7 +36,7 @@ class BoundaryRepository:
     Every query uses parameterized placeholders ($1, $2, …) — never
     string-format coordinates into SQL.
     """
-
+    #the above constrain by BoundaryRepository is violated by publish.py and ingest.py, which both have raw SQL.  I think the idea is that this class is the only one that should have raw SQL, but ingest.py has to insert into the table, and publish.py has to query it for publishing.  So maybe I should move those queries into this class too.
     async def find_exact(self, lat: float, lon: float) -> dict | None:
         """ST_Contains lookup scoped to ``is_current = true``.
 
