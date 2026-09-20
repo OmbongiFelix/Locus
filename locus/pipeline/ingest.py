@@ -214,6 +214,16 @@ async def write_to_staging(
     sub_location are administrative subdivisions that legitimately
     vary by source dataset, so a missing value defaults to ``None``.
 
+    Column fallbacks also cover GADM's naming (NAME_1/NAME_2/NAME_3
+    for county/sub-county/ward). NAME_2 is deliberately routed to
+    sub_county_name, not constituency — GADM's level-2 units are
+    administrative sub-counties, not IEBC electoral constituencies,
+    and mapping one onto the other would mislabel the data as
+    something it isn't. A GADM-sourced row will therefore always
+    insert an empty ``constituency`` — that's expected, not a bug.
+    Populating real constituency boundaries needs an actual
+    electoral boundary source (e.g. IEBC's admbnda dataset).
+
     All rows are inserted as a single batch inside one transaction —
     if any row fails, nothing is written, so publish.py can never pick
     up a partial staging set for this ``boundary_version``.
@@ -223,10 +233,10 @@ async def write_to_staging(
     records = [
         (
             row["geometry"].wkt,
-            row.get("county_name", row.get("COUNTY", "")),
+            row.get("county_name", row.get("COUNTY", row.get("NAME_1", ""))),
             row.get("constituency", row.get("CONSTITUEN", "")),
-            row.get("ward_name", row.get("WARD", "")),
-            row.get("sub_county_name", row.get("SUBCOUNTY", None)),
+            row.get("ward_name", row.get("WARD", row.get("NAME_3", ""))),
+            row.get("sub_county_name", row.get("SUBCOUNTY", row.get("NAME_2", None))),
             row.get("location_name", row.get("LOCATION", None)),
             row.get("sub_location", row.get("SUBLOC", None)),
             source_dataset,
