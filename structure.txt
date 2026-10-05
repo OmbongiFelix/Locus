@@ -5,6 +5,7 @@ tests
 .env.example
 docker-compose.test.yml
 docker-compose.yaml
+Dockerfile
 locus overview.png
 pyproject.toml
 README.md
