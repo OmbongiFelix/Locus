@@ -44,6 +44,7 @@ import logging
 from typing import Any, cast
 
 import geopandas as gpd
+import pandas as pd
 from shapely.geometry import MultiPolygon
 from shapely.validation import make_valid
 
@@ -107,6 +108,29 @@ def _has_required_columns(columns: set[str]) -> bool:
         any(alias in columns for alias in aliases)
         for aliases in REQUIRED_COLUMN_ALIASES.values()
     )
+
+
+def _clean(value: Any, default: Any = None) -> Any:
+    """Collapse a raw attribute value to *default* when it's missing.
+
+    ``row.get(key, default)`` only checks whether *key* exists in the
+    row — it happily returns a cell that's present but empty. Pandas
+    represents that emptiness as float ``NaN``, not ``None``, which
+    asyncpg then rejects outright (it expects str, gets float). This
+    matters most for merged/joined sources (e.g. an IEBC+GADM merge)
+    where some rows may have no match on one side of the join, so
+    treat both ``None`` and ``NaN`` as equally "missing."
+    """
+    if value is None:
+        return default
+    try:
+        if pd.isna(value):
+            return default
+    except (TypeError, ValueError):
+        # pd.isna() can raise on some array-like inputs — treat those
+        # as present rather than let ingest crash on an edge case.
+        pass
+    return value
 
 
 def resolve_layer(source_path: str, requested_layer: str | None) -> str | None:
@@ -224,6 +248,12 @@ async def write_to_staging(
     Populating real constituency boundaries needs an actual
     electoral boundary source (e.g. IEBC's admbnda dataset).
 
+    Every extracted value passes through _clean(), so a cell that's
+    present but empty (NaN — common in merged/joined sources where a
+    row didn't match on one side of the join) falls back the same way
+    a genuinely absent column would, instead of reaching asyncpg as
+    an un-encodable float.
+
     All rows are inserted as a single batch inside one transaction —
     if any row fails, nothing is written, so publish.py can never pick
     up a partial staging set for this ``boundary_version``.
@@ -233,12 +263,12 @@ async def write_to_staging(
     records = [
         (
             row["geometry"].wkt,
-            row.get("county_name", row.get("COUNTY", row.get("NAME_1", ""))),
-            row.get("constituency", row.get("CONSTITUEN", "")),
-            row.get("ward_name", row.get("WARD", row.get("NAME_3", ""))),
-            row.get("sub_county_name", row.get("SUBCOUNTY", row.get("NAME_2", None))),
-            row.get("location_name", row.get("LOCATION", None)),
-            row.get("sub_location", row.get("SUBLOC", None)),
+            _clean(row.get("county_name", row.get("COUNTY", row.get("NAME_1"))), ""),
+            _clean(row.get("constituency", row.get("CONSTITUEN")), ""),
+            _clean(row.get("ward_name", row.get("WARD", row.get("NAME_3"))), ""),
+            _clean(row.get("sub_county_name", row.get("SUBCOUNTY", row.get("NAME_2"))), None),
+            _clean(row.get("location_name", row.get("LOCATION")), None),
+            _clean(row.get("sub_location", row.get("SUBLOC")), None),
             source_dataset,
             boundary_version,
         )
@@ -247,19 +277,26 @@ async def write_to_staging(
 
     async with get_connection() as conn:
         async with conn.transaction():
-            await conn.executemany(
-                """
-                INSERT INTO kenya_admin_boundaries_staging (
-                    geom, county_name, constituency, ward_name,
-                    sub_county_name, location_name, sub_location,
-                    source_dataset, boundary_version, is_current
-                ) VALUES (
-                    ST_Multi(ST_GeomFromText($1, 4326)),
-                    $2, $3, $4, $5, $6, $7, $8, $9, false
+            chunk_size = 25
+            
+            for i in range(0, len(records), chunk_size):
+                chunk = records[i:i + chunk_size]
+                
+                await conn.executemany(
+                    """
+                    INSERT INTO kenya_admin_boundaries_staging (
+                        geom, county_name, constituency, ward_name,
+                        sub_county_name, location_name, sub_location,
+                        source_dataset, boundary_version, is_current
+                    ) VALUES (
+                        ST_Multi(ST_GeomFromText($1, 4326)),
+                        $2, $3, $4, $5, $6, $7, $8, $9, false
+                    )
+                    """,
+                    chunk,
+                    timeout=120.0  # Gives the DB 2 minutes per chunk
                 )
-                """,
-                records,
-            )
+                
     return len(records)
 
 
