@@ -21,8 +21,7 @@ COPY locus/ ./locus/
 # Install the application and its dependencies
 RUN uv pip install --system .
 
-# Copy environment configuration
-COPY .env ./
+
 
 # FastAPI
 EXPOSE 8000
