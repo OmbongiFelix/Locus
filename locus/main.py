@@ -24,6 +24,7 @@ from locus.config import get_settings
 from locus.logging_config import configure_logging
 from locus.domain.validation import InvalidCoordinatesError
 from locus.domain.geocode_service import NoMatchError
+from fastapi.middleware.cors import CORSMiddleware
 
 configure_logging()
 
@@ -43,6 +44,15 @@ app = FastAPI(
     version="0.1.0",
     description="Kenyan reverse-geocoding service backed by PostGIS",
     lifespan=_lifespan,
+)
+
+pp.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or lock it to your frontend URL:
+    # allow_origins=["https://locus-frontend.onrender.com", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(router, prefix="/v1")
