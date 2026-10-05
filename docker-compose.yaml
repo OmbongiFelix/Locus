@@ -31,7 +31,26 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    
+  api:
+   build: .
+   container_name: locus_api
+   restart: unless-stopped
+   env_file: .env
+   ports:
+     - "80:8000"
+   depends_on:
+     postgres:
+       condition: service_healthy
+     redis:
+       condition: service_healthy
 
 volumes:
   redis_data:
   postgres_data:
+  
+ 
+
+  
+        
+        
