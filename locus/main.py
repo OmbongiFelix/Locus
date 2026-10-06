@@ -46,9 +46,10 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
-app.add_middleware(
+pp.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://locus-frontend-8t7a.onrender.com/", "http://localhost:5173"],
+    #allow_origins=["*"],  # or lock it to your frontend URL:
+    allow_origins=["https://locus-frontend-8t7a.onrender.com", "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
