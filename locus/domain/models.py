@@ -23,6 +23,7 @@ class User:
     email_verified_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    unverified_request_count: int = 0
 
     @property
     def is_verified(self) -> bool:

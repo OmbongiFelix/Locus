@@ -20,6 +20,7 @@ from locus.domain.api_key_service import (
     APIKeyRevokedError,
     APIKeyService,
     InvalidAPIKeyError,
+    UnverifiedTrialLimitReachedError,
     UserInactiveError,
     UserUnverifiedError,
 )
@@ -72,9 +73,10 @@ def get_auth_service(
 
 def get_api_key_service(
     key_repo: APIKeyRepository = Depends(get_api_key_repository),
+    user_repo: UserRepository = Depends(get_user_repository),
 ) -> APIKeyService:
-    """Return APIKeyService wired with APIKeyRepository."""
-    return APIKeyService(repository=key_repo)
+    """Return APIKeyService wired with APIKeyRepository and UserRepository."""
+    return APIKeyService(repository=key_repo, user_repository=user_repo)
 
 
 # ── Legacy API Key & Rate Limiting ───────────────────────────────────
@@ -219,12 +221,8 @@ async def get_current_user(
             detail={"error": "account_inactive", "message": "User account is disabled"},
         )
 
-    if not user.is_verified:
-        raise HTTPException(
-            status_code=403,
-            detail={"error": "account_unverified", "message": "User email address is not verified"},
-        )
-
+    # Note: Unverified users are permitted to manage their account and API keys
+    # during their initial trial evaluation period.
     return user
 
 
@@ -288,6 +286,11 @@ async def get_current_user_from_api_key(
         raise HTTPException(
             status_code=403,
             detail={"error": "account_inactive", "message": str(exc)},
+        )
+    except UnverifiedTrialLimitReachedError as exc:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "unverified_trial_limit_reached", "message": str(exc)},
         )
     except UserUnverifiedError as exc:
         raise HTTPException(

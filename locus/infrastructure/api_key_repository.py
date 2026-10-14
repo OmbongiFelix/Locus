@@ -107,7 +107,7 @@ class APIKeyRepository:
                 SELECT k.id AS key_id, k.user_id, k.name, k.key_prefix, k.key_hash,
                        k.created_at AS key_created_at, k.expires_at, k.revoked_at,
                        u.id AS user_pk, u.email, u.password_hash, u.is_active,
-                       u.email_verified_at, u.created_at AS user_created_at, u.updated_at
+                       u.email_verified_at, u.unverified_request_count, u.created_at AS user_created_at, u.updated_at
                   FROM api_keys k
                   JOIN users u ON k.user_id = u.id
                  WHERE k.key_hash = $1
@@ -135,6 +135,11 @@ class APIKeyRepository:
             revoked_at=row["revoked_at"],
         )
 
+        try:
+            unverified_count = int(row["unverified_request_count"])
+        except (KeyError, IndexError, TypeError):
+            unverified_count = 0
+
         user = User(
             id=user_id,
             email=row["email"],
@@ -143,6 +148,7 @@ class APIKeyRepository:
             email_verified_at=row["email_verified_at"],
             created_at=row["user_created_at"],
             updated_at=row["updated_at"],
+            unverified_request_count=unverified_count,
         )
 
         return api_key, user

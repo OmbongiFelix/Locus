@@ -18,6 +18,7 @@ from locus.domain.api_key_service import (
     APIKeyRevokedError,
     APIKeyService,
     InvalidAPIKeyError,
+    UnverifiedTrialLimitReachedError,
     UserInactiveError,
     UserUnverifiedError,
 )
@@ -162,8 +163,28 @@ class TestProtectedEndpointsAuth:
         assert resp.status_code == 403
         assert resp.json()["detail"]["error"] == "account_inactive"
 
-    def test_unverified_user_403(self, client, mock_key_service):
-        mock_key_service.authenticate_key.side_effect = UserUnverifiedError("User unverified")
+    def test_unverified_user_allowed_during_trial(
+        self, client, mock_key_service, sample_api_key, sample_user
+    ):
+        sample_user.email_verified_at = None
+        sample_user.unverified_request_count = 1
+        mock_key_service.authenticate_key.return_value = (sample_api_key, sample_user)
+
+        resp = client.get(
+            "/v1/protected/geocode/reverse",
+            params={"lat": -1.2864, "lon": 36.8172},
+            headers={"Authorization": "Bearer locus_live_somekey"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["county_name"] == "Nairobi"
+
+    def test_unverified_user_limit_reached_returns_403_with_activation_message(
+        self, client, mock_key_service
+    ):
+        mock_key_service.authenticate_key.side_effect = UnverifiedTrialLimitReachedError(
+            "You have reached the maximum of 5 requests for unverified accounts. "
+            "Please activate your account by verifying your email to continue using the API."
+        )
 
         resp = client.get(
             "/v1/protected/geocode/reverse",
@@ -171,7 +192,9 @@ class TestProtectedEndpointsAuth:
             headers={"Authorization": "Bearer locus_live_somekey"},
         )
         assert resp.status_code == 403
-        assert resp.json()["detail"]["error"] == "account_unverified"
+        body = resp.json()["detail"]
+        assert body["error"] == "unverified_trial_limit_reached"
+        assert "activate your account" in body["message"]
 
     def test_protected_batch_success(
         self, client, mock_key_service, sample_api_key, sample_user

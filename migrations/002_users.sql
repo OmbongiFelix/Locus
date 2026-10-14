@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash     TEXT NOT NULL,
     is_active         BOOLEAN NOT NULL DEFAULT true,
     email_verified_at TIMESTAMPTZ,
+    unverified_request_count INT NOT NULL DEFAULT 0,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );

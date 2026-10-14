@@ -20,6 +20,11 @@ def _record_to_user(row: asyncpg.Record) -> User:
     user_id = row["id"]
     if isinstance(user_id, str):
         user_id = UUID(user_id)
+    try:
+        unverified_count = int(row["unverified_request_count"])
+    except (KeyError, IndexError, TypeError):
+        unverified_count = 0
+
     return User(
         id=user_id,
         email=row["email"],
@@ -28,6 +33,7 @@ def _record_to_user(row: asyncpg.Record) -> User:
         email_verified_at=row["email_verified_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        unverified_request_count=unverified_count,
     )
 
 
@@ -60,9 +66,9 @@ class UserRepository:
         async with get_connection() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO users (email, password_hash, is_active, email_verified_at)
-                VALUES ($1, $2, true, NULL)
-                RETURNING id, email, password_hash, is_active, email_verified_at, created_at, updated_at
+                INSERT INTO users (email, password_hash, is_active, email_verified_at, unverified_request_count)
+                VALUES ($1, $2, true, NULL, 0)
+                RETURNING id, email, password_hash, is_active, email_verified_at, unverified_request_count, created_at, updated_at
                 """,
                 email.strip().lower(),
                 password_hash,
@@ -74,7 +80,7 @@ class UserRepository:
         async with get_connection() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT id, email, password_hash, is_active, email_verified_at, created_at, updated_at
+                SELECT id, email, password_hash, is_active, email_verified_at, unverified_request_count, created_at, updated_at
                   FROM users
                  WHERE id = $1
                 """,
@@ -89,7 +95,7 @@ class UserRepository:
         async with get_connection() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT id, email, password_hash, is_active, email_verified_at, created_at, updated_at
+                SELECT id, email, password_hash, is_active, email_verified_at, unverified_request_count, created_at, updated_at
                   FROM users
                  WHERE LOWER(email) = LOWER($1)
                 """,
@@ -98,6 +104,23 @@ class UserRepository:
         if row is None:
             return None
         return _record_to_user(row)
+
+    async def increment_unverified_request_count(self, user_id: UUID) -> int:
+        """Atomically increment and return the unverified request count for a user."""
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE users
+                   SET unverified_request_count = unverified_request_count + 1,
+                       updated_at = now()
+                 WHERE id = $1
+                RETURNING unverified_request_count
+                """,
+                user_id,
+            )
+        if row is None:
+            return 0
+        return int(row["unverified_request_count"])
 
     async def create_verification_token(
         self, user_id: UUID, token_hash: str, expires_at: datetime

@@ -186,15 +186,26 @@ class TestLoginEndpoint:
         assert resp.status_code == 401
         assert resp.json()["detail"]["error"] == "invalid_credentials"
 
-    def test_login_unverified_account_403(self, auth_client, mock_auth_service):
-        mock_auth_service.authenticate.side_effect = AccountUnverifiedError("Unverified email")
+    def test_login_unverified_account_succeeds_for_trial(
+        self, auth_client, mock_auth_service, verified_user
+    ):
+        unverified = User(
+            id=verified_user.id,
+            email=verified_user.email,
+            password_hash=verified_user.password_hash,
+            is_active=True,
+            email_verified_at=None,
+            created_at=verified_user.created_at,
+            updated_at=verified_user.updated_at,
+        )
+        mock_auth_service.authenticate.return_value = unverified
 
         resp = auth_client.post(
             "/v1/auth/login",
             json={"email": "developer@example.com", "password": "Password123!"},
         )
-        assert resp.status_code == 403
-        assert resp.json()["detail"]["error"] == "account_unverified"
+        assert resp.status_code == 200
+        assert "access_token" in resp.json()
 
     def test_login_inactive_account_403(self, auth_client, mock_auth_service):
         mock_auth_service.authenticate.side_effect = AccountInactiveError("Inactive account")

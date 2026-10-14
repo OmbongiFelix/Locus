@@ -15,11 +15,14 @@ from locus.domain.api_key_service import (
     APIKeyService,
     InvalidAPIKeyError,
     InvalidKeyNameError,
+    UnverifiedTrialLimitReachedError,
     UserInactiveError,
     UserUnverifiedError,
 )
 from locus.domain.models import APIKey, User
 from locus.infrastructure.api_key_repository import APIKeyRepository
+from locus.infrastructure.email_service import MockEmailProvider
+from locus.infrastructure.user_repository import UserRepository
 from locus.security import hash_password, hash_token
 
 
@@ -29,8 +32,26 @@ def mock_api_key_repo():
 
 
 @pytest.fixture
-def api_key_service(mock_api_key_repo):
-    return APIKeyService(repository=mock_api_key_repo)
+def mock_user_repo():
+    repo = AsyncMock(spec=UserRepository)
+    repo.increment_unverified_request_count = AsyncMock(return_value=1)
+    repo.create_verification_token = AsyncMock()
+    repo.invalidate_pending_tokens = AsyncMock()
+    return repo
+
+
+@pytest.fixture
+def mock_email_provider():
+    return MockEmailProvider()
+
+
+@pytest.fixture
+def api_key_service(mock_api_key_repo, mock_user_repo, mock_email_provider):
+    return APIKeyService(
+        repository=mock_api_key_repo,
+        user_repository=mock_user_repo,
+        email_provider=mock_email_provider,
+    )
 
 
 @pytest.fixture
@@ -211,13 +232,44 @@ class TestAPIKeyAuthentication:
             await api_key_service.authenticate_key(raw_key)
 
     @pytest.mark.asyncio
-    async def test_authenticate_unverified_user_raises(
-        self, api_key_service, mock_api_key_repo, sample_user, sample_api_key
+    async def test_authenticate_unverified_user_allowed_five_requests_then_blocked_and_emailed(
+        self, api_key_service, mock_api_key_repo, mock_user_repo, mock_email_provider, sample_user, sample_api_key
     ):
         raw_key = "locus_live_unverifiedkey"
         sample_api_key.key_hash = hash_token(raw_key)
         sample_user.email_verified_at = None
+        sample_user.unverified_request_count = 0
         mock_api_key_repo.get_by_hash.return_value = (sample_api_key, sample_user)
 
-        with pytest.raises(UserUnverifiedError):
+        # Requests 1 to 5 should succeed
+        for expected_count in range(1, 6):
+            mock_user_repo.increment_unverified_request_count.return_value = expected_count
+            key, user = await api_key_service.authenticate_key(raw_key)
+            assert key.id == sample_api_key.id
+            assert user.id == sample_user.id
+            assert user.unverified_request_count == expected_count
+
+        # At the end of the trial period (5th request), activation email was triggered
+        assert len(mock_email_provider.sent_emails) >= 1
+        assert mock_email_provider.sent_emails[-1]["to_email"] == sample_user.email
+
+        # 6th request: user has hit max (5 requests), should be blocked with limit message
+        sample_user.unverified_request_count = 5
+        with pytest.raises(UnverifiedTrialLimitReachedError, match="maximum of 5 requests"):
             await api_key_service.authenticate_key(raw_key)
+
+    @pytest.mark.asyncio
+    async def test_authenticate_verified_user_not_limited(
+        self, api_key_service, mock_api_key_repo, mock_user_repo, sample_user, sample_api_key
+    ):
+        raw_key = "locus_live_verifiedkey"
+        sample_api_key.key_hash = hash_token(raw_key)
+        sample_user.email_verified_at = datetime.now(timezone.utc)
+        mock_api_key_repo.get_by_hash.return_value = (sample_api_key, sample_user)
+
+        # Verified users can make any number of requests without trial increment
+        for _ in range(10):
+            key, user = await api_key_service.authenticate_key(raw_key)
+            assert user.is_verified is True
+
+        mock_user_repo.increment_unverified_request_count.assert_not_awaited()

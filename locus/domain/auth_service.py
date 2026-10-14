@@ -219,9 +219,5 @@ class AuthService:
         if not user.is_active:
             raise AccountInactiveError("This user account is inactive. Please contact support.")
 
-        if not user.is_verified:
-            raise AccountUnverifiedError(
-                "Email address has not been verified. Please check your inbox or request a new verification email."
-            )
-
+        # Unverified accounts are permitted to authenticate during trial
         return user

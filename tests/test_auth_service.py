@@ -236,14 +236,15 @@ class TestAuthentication:
             await auth_service.authenticate("nobody@example.com", "AnyPassword123!")
 
     @pytest.mark.asyncio
-    async def test_authenticate_unverified_account_rejected(
+    async def test_authenticate_unverified_account_allowed_during_trial(
         self, auth_service, mock_user_repo, sample_user
     ):
         sample_user.email_verified_at = None
         mock_user_repo.get_by_email.return_value = sample_user
 
-        with pytest.raises(AccountUnverifiedError):
-            await auth_service.authenticate("test@example.com", "ValidPassword123!")
+        user = await auth_service.authenticate("test@example.com", "ValidPassword123!")
+        assert user.id == sample_user.id
+        assert user.is_verified is False
 
     @pytest.mark.asyncio
     async def test_authenticate_inactive_account_rejected(

@@ -9,9 +9,15 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from locus.config import get_settings
 from locus.domain.models import APIKey, User
 from locus.infrastructure.api_key_repository import APIKeyRepository
-from locus.security import generate_api_key, hash_token
+from locus.infrastructure.email_service import EmailProvider, get_email_provider
+from locus.infrastructure.user_repository import UserRepository
+from locus.security import generate_api_key, generate_verification_token, hash_token
+
+# In-memory cooldown tracker for trial expiration emails to prevent spamming
+_last_activation_email: dict[UUID, float] = {}
 
 
 class APIKeyError(Exception):
@@ -42,6 +48,10 @@ class UserUnverifiedError(APIKeyError):
     """Raised when the owner of an API key is unverified."""
 
 
+class UnverifiedTrialLimitReachedError(UserUnverifiedError):
+    """Raised when an unverified user has reached their maximum allowed trial requests."""
+
+
 class InvalidKeyNameError(APIKeyError):
     """Raised when an invalid key name is provided."""
 
@@ -49,8 +59,47 @@ class InvalidKeyNameError(APIKeyError):
 class APIKeyService:
     """Orchestrates API key generation, listing, revocation, and authentication."""
 
-    def __init__(self, repository: APIKeyRepository) -> None:
+    def __init__(
+        self,
+        repository: APIKeyRepository,
+        user_repository: UserRepository | None = None,
+        email_provider: EmailProvider | None = None,
+    ) -> None:
         self._repository = repository
+        self._user_repository = user_repository
+        self._email_provider = email_provider
+
+    async def _send_activation_email(self, user: User) -> None:
+        """Send an account activation email when the trial limit is reached."""
+        if self._user_repository is None:
+            return
+
+        now_ts = datetime.now(timezone.utc).timestamp()
+        last_sent = _last_activation_email.get(user.id, 0.0)
+        # Avoid duplicate email spam within 60 seconds
+        if now_ts - last_sent < 60.0:
+            return
+        _last_activation_email[user.id] = now_ts
+
+        provider = self._email_provider or get_email_provider()
+
+        # Invalidate any pending unused tokens
+        await self._user_repository.invalidate_pending_tokens(user.id)
+
+        # Issue fresh token
+        raw_token, token_hash = generate_verification_token()
+        settings = get_settings()
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            hours=getattr(settings, "VERIFICATION_TOKEN_EXPIRE_HOURS", 24)
+        )
+
+        await self._user_repository.create_verification_token(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+        )
+
+        await provider.send_verification_email(user.email, raw_token)
 
     async def create_key(
         self,
@@ -119,7 +168,8 @@ class APIKeyService:
         3. Key is not revoked
         4. Key is not expired
         5. User exists and is active
-        6. User email is verified
+        6. Unverified accounts are limited to MAX_UNVERIFIED_REQUESTS (default 5).
+           Once exceeded, raises UnverifiedTrialLimitReachedError and dispatches activation email.
 
         Returns:
             (APIKey, User)
@@ -146,6 +196,26 @@ class APIKeyService:
             raise UserInactiveError("User account is inactive.")
 
         if not user.is_verified:
-            raise UserUnverifiedError("User account email is unverified.")
+            settings = get_settings()
+            max_trial = getattr(settings, "MAX_UNVERIFIED_REQUESTS", 5)
+
+            if user.unverified_request_count >= max_trial:
+                # Deliver activation email when the limit message is returned
+                await self._send_activation_email(user)
+                raise UnverifiedTrialLimitReachedError(
+                    f"You have reached the maximum of {max_trial} requests for unverified accounts. "
+                    "Please activate your account by verifying your email to continue using the API."
+                )
+
+            # Increment trial request count
+            if self._user_repository is not None:
+                new_count = await self._user_repository.increment_unverified_request_count(user.id)
+                user.unverified_request_count = new_count
+            else:
+                user.unverified_request_count += 1
+
+            # Dispatch activation email at the end of the trial period
+            if user.unverified_request_count >= max_trial:
+                await self._send_activation_email(user)
 
         return api_key, user

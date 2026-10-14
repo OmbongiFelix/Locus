@@ -46,6 +46,9 @@ docker exec -i postgres psql -U $POSTGRES_USER -d $POSTGRES_DB \
 
 docker exec -i postgres psql -U $POSTGRES_USER -d $POSTGRES_DB \
     < migrations/003_api_keys.sql
+
+docker exec -i postgres psql -U $POSTGRES_USER -d $POSTGRES_DB \
+    < migrations/004_unverified_trial.sql
 ```
 
 ### 3. Install dependencies
@@ -290,11 +293,14 @@ curl -X POST http://localhost:8000/v1/protected/geocode/reverse/batch \
    - Stored exclusively as a **SHA-256 cryptographic hash** (`key_hash`).
    - The raw key is returned **only once** at creation and is never logged or displayed again.
    - Non-secret prefixes (e.g. `locus_live_abcd`) are stored for display and human recognition.
-3. **Email Verification**:
+3. **Email Verification & Unverified Trial Policy**:
    - Verification tokens are high-entropy single-use tokens generated with `secrets`.
    - Stored as SHA-256 hashes in `email_verification_tokens`.
    - Consumed atomically with user account verification in a database transaction (`UPDATE ... WHERE used_at IS NULL`).
-   - Accounts must be verified before login and API key issuance are permitted.
+   - **Reviewer / Trial Allowance**: Unverified accounts are permitted to sign in, create API keys, and make up to **5 API requests** (`MAX_UNVERIFIED_REQUESTS=5`) so reviewers can evaluate the API immediately without verifying upfront.
+   - **Limit Enforcement**: Upon making the 6th request, unverified accounts receive an HTTP 403 Forbidden error with a message instructing them to activate their account (`You have reached the maximum of 5 requests for unverified accounts. Please activate your account by verifying your email to continue using the API.`).
+   - **Automatic Activation Email**: When the 5-request trial limit is reached, an activation email with a fresh verification link is automatically dispatched to the user's registered email address.
+   - Once verified, the request count limit is removed and full access is granted.
 4. **Session / Access Tokens**:
    - JWTs signed using HMAC-SHA256 (HS256) with environment-configured `SECRET_KEY`.
    - Short expiration window (default 60 minutes).
@@ -424,5 +430,6 @@ tests/                          # Test suite
 migrations/
 ├── 001_initial_schema.sql      # Initial PostGIS schema
 ├── 002_users.sql               # User accounts and verification tokens schema
-└── 003_api_keys.sql            # API keys schema
+├── 003_api_keys.sql            # API keys schema
+└── 004_unverified_trial.sql    # Unverified trial request count schema
 ```

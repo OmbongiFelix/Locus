@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     VERIFICATION_TOKEN_EXPIRE_HOURS: int = 24
     AUTH_RATE_LIMIT_PER_MINUTE: int = 10
+    MAX_UNVERIFIED_REQUESTS: int = 5
 
     # Email provider settings ("console", "mock", "smtp")
     EMAIL_PROVIDER: str = "console"
