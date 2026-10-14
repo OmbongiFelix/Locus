@@ -18,6 +18,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from locus.api.routes import router
+from locus.api.auth_routes import router as auth_router
+from locus.api.api_key_routes import router as api_key_router
 from locus.infrastructure.db import init_db_pool, close_db_pool
 from locus.infrastructure.cache import init_cache, close_cache
 from locus.config import get_settings
@@ -56,6 +58,12 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/v1")
+app.include_router(auth_router, prefix="/v1")
+app.include_router(api_key_router, prefix="/v1")
+
+# Also mount at root (/auth and /api-keys) for direct access
+app.include_router(auth_router)
+app.include_router(api_key_router)
 
 
 # ── Global exception handlers ───────────────────────────────────────

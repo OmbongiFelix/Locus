@@ -26,8 +26,14 @@ from locus.api.schemas import (
     VersionResponse,
     MatchType as APIMatchType,
 )
-from locus.api.dependencies import get_geocode_service, rate_limiter, verify_api_key
+from locus.api.dependencies import (
+    get_current_user_from_api_key,
+    get_geocode_service,
+    rate_limiter,
+    verify_api_key,
+)
 from locus.domain.geocode_service import GeocodeService, NoMatchError
+from locus.domain.models import User
 from locus.domain.validation import InvalidCoordinatesError
 from locus.infrastructure.boundary_repository import BoundaryRepository
 
@@ -62,6 +68,7 @@ async def reverse_geocode(
     lat: float = Query(..., ge=-90, le=90),
     lon: float = Query(..., ge=-180, le=180),
     service: GeocodeService = Depends(get_geocode_service),
+    api_key: str = Depends(verify_api_key),
     _rate: None = Depends(rate_limiter),
 ) -> GeocodeResponse:
     """Single-point reverse geocode."""
@@ -96,9 +103,59 @@ async def reverse_geocode(
 async def reverse_geocode_batch(
     body: BatchGeocodeRequest,
     service: GeocodeService = Depends(get_geocode_service),
+    api_key: str = Depends(verify_api_key),
     _rate: None = Depends(rate_limiter),
 ) -> list[GeocodeResponse]:
     """Batch reverse geocode (capped at ``MAX_BATCH_SIZE``)."""
+    try:
+        points = [(p.lat, p.lon) for p in body.points]
+        results = await service.reverse_geocode_batch(points)
+    except InvalidCoordinatesError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_coordinates", "message": str(exc)},
+        )
+    except NoMatchError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "no_match", "message": str(exc)},
+        )
+    return [_to_response(r) for r in results]
+
+
+# ── Protected Endpoints (API Key Authenticated) ──────────────────────
+
+
+@router.get("/protected/geocode/reverse", response_model=GeocodeResponse)
+async def protected_reverse_geocode(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    service: GeocodeService = Depends(get_geocode_service),
+    current_user: User = Depends(get_current_user_from_api_key),
+) -> GeocodeResponse:
+    """Protected single-point reverse geocode requiring Authorization: Bearer <api_key>."""
+    try:
+        result = await service.reverse_geocode(lat, lon)
+    except InvalidCoordinatesError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_coordinates", "message": str(exc)},
+        )
+    except NoMatchError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "no_match", "message": str(exc)},
+        )
+    return _to_response(result)
+
+
+@router.post("/protected/geocode/reverse/batch", response_model=list[GeocodeResponse])
+async def protected_reverse_geocode_batch(
+    body: BatchGeocodeRequest,
+    service: GeocodeService = Depends(get_geocode_service),
+    current_user: User = Depends(get_current_user_from_api_key),
+) -> list[GeocodeResponse]:
+    """Protected batch reverse geocode requiring Authorization: Bearer <api_key>."""
     try:
         points = [(p.lat, p.lon) for p in body.points]
         results = await service.reverse_geocode_batch(points)

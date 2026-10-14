@@ -30,9 +30,10 @@ class GeocodeResult:
     county_name: str
     constituency: str
     ward_name: str
-    sub_county_name: str | None  # i added this to support sub-county level reverse geocoding
     location_name: str | None
     sub_location: str | None
     match_type: MatchType
     distance_m: float
     boundary_version: str
+    sub_county_name: str | None = None
+
