@@ -89,6 +89,10 @@ async def _no_match_handler(request: Request, exc: NoMatchError):
 
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
+    from fastapi import HTTPException as _HTTPException
+
+    if isinstance(exc, _HTTPException):
+        raise exc
     return JSONResponse(
         status_code=500,
         content={

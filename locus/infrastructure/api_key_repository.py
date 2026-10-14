@@ -158,30 +158,47 @@ class APIKeyRepository:
     ) -> APIKey | None:
         """Revoke an API key belonging to the user.
 
-        If already revoked, preserves original revoked_at and returns the record (idempotent).
-        If the key does not exist or belongs to another user, returns None.
+        Uses a single connection and SELECT FOR UPDATE to avoid a TOCTOU race
+        between the ownership check and the UPDATE.  Revocation is idempotent:
+        if the key is already revoked the original revoked_at is preserved and
+        the existing record is returned.  Returns None if the key does not
+        exist or belongs to another user.
         """
         async with get_connection() as conn:
-            # First check if the key belongs to this user
-            existing = await self.get_by_id_and_user_id(key_id, user_id)
-            if existing is None:
-                return None
-            if existing.is_revoked:
-                return existing
+            async with conn.transaction():
+                existing_row = await conn.fetchrow(
+                    """
+                    SELECT id, user_id, name, key_prefix, key_hash,
+                           created_at, expires_at, revoked_at
+                      FROM api_keys
+                     WHERE id = $1
+                       AND user_id = $2
+                     FOR UPDATE
+                    """,
+                    key_id,
+                    user_id,
+                )
+                if existing_row is None:
+                    return None
 
-            row = await conn.fetchrow(
-                """
-                UPDATE api_keys
-                   SET revoked_at = $1
-                 WHERE id = $2
-                   AND user_id = $3
-                   AND revoked_at IS NULL
-                RETURNING id, user_id, name, key_prefix, key_hash, created_at, expires_at, revoked_at
-                """,
-                revoked_at,
-                key_id,
-                user_id,
-            )
+                existing = _record_to_api_key(existing_row)
+                if existing.is_revoked:
+                    return existing
+
+                row = await conn.fetchrow(
+                    """
+                    UPDATE api_keys
+                       SET revoked_at = $1
+                     WHERE id = $2
+                       AND user_id = $3
+                       AND revoked_at IS NULL
+                    RETURNING id, user_id, name, key_prefix, key_hash,
+                              created_at, expires_at, revoked_at
+                    """,
+                    revoked_at,
+                    key_id,
+                    user_id,
+                )
         if row is None:
             return existing
         return _record_to_api_key(row)
