@@ -1,6 +1,25 @@
 # Locus
 
-> Reverse-geocode any lat/lon to Kenya's County, Constituency, Ward, Location, and Sub-Location — self-hosted, PostGIS-powered, no third-party API required.
+> Reverse-geocode any lat/lon to Kenya's County, Sub-County, Constituency, Ward, Location, and Sub-Location — self-hosted, PostGIS-powered, no third-party API required.
+
+**API version:** `0.1.0` · **Spec:** OpenAPI 3.1 · **Stack:** FastAPI, PostGIS, Redis, asyncpg
+
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [API Overview](#api-overview)
+- [Geocoding API](#geocoding-api)
+- [Boundaries & Health API](#boundaries--health-api)
+- [Self-Service Accounts & API Key Management](#self-service-accounts--api-key-management)
+- [Schema Reference](#schema-reference)
+- [Errors](#errors)
+- [Security Model](#security-model)
+- [Offline Pipeline](#offline-pipeline)
+- [Running Tests](#running-tests)
+- [Project Layout](#project-layout)
+
+---
 
 ## Architecture
 
@@ -77,6 +96,149 @@ curl http://localhost:8000/v1/health
 curl http://localhost:8000/v1/boundaries/version
 ```
 
+> **Tip:** The OpenAPI document (`openapi.json`) describes every endpoint below. If you are running the stock FastAPI app, interactive docs are also served at `/docs` (Swagger UI) and `/redoc`.
+
+---
+
+## API Overview
+
+**Base URL (local):** `http://localhost:8000`
+
+### Versioned and unversioned routes
+
+Account and API-key endpoints are exposed under **two equivalent paths**. Prefer the versioned `/v1/...` form in new integrations.
+
+| Resource | Versioned (preferred) | Unversioned alias |
+|---|---|---|
+| Auth | `/v1/auth/*` | `/auth/*` |
+| API keys | `/v1/api-keys/*` | `/api-keys/*` |
+
+Geocoding, boundary, and health endpoints exist only under `/v1/...`.
+
+### Authentication schemes
+
+| Scheme | Header | Used by |
+|---|---|---|
+| **None** | — | Health, boundary version, register, verify-email, resend-verification, login |
+| **User JWT** | `Authorization: Bearer <ACCESS_TOKEN>` | `/auth/me`, all `/api-keys` endpoints |
+| **API key (Bearer)** | `Authorization: Bearer <API_KEY>` | `/v1/protected/geocode/*` |
+| **API key (legacy)** | `X-API-Key: <API_KEY>` | `/v1/geocode/*` |
+
+> **Note:** The OpenAPI spec marks the `Authorization` header as *optional* on protected and user-scoped endpoints because the check is enforced at runtime, not by schema validation. Requests without a valid credential are rejected. The legacy `X-API-Key` header is declared *required*.
+
+### Endpoint reference
+
+| Method | Path | Tag | Access | Auth | Success | Description |
+|---|---|---|---|---|---|---|
+| `GET` | `/v1/health` | — | Public | None | `200` | Liveness/readiness probe — 200 once DB and cache are reachable |
+| `GET` | `/v1/boundaries/version` | — | Public | None | `200` | Active boundary version and effective date |
+| `POST` | `/v1/auth/register` | auth | Public (rate-limited) | None | `201` | Register a new user account |
+| `POST` | `/v1/auth/verify-email` | auth | Public | None | `200` | Verify email with a single-use token |
+| `POST` | `/v1/auth/resend-verification` | auth | Public (rate-limited) | None | `200` | Request a fresh verification token |
+| `POST` | `/v1/auth/login` | auth | Public (rate-limited) | None | `200` | Sign in and obtain an access token |
+| `GET` | `/v1/auth/me` | auth | Authenticated user | Bearer JWT | `200` | Get authenticated user profile |
+| `POST` | `/v1/api-keys` | api-keys | Authenticated user | Bearer JWT | `201` | Generate a new API key |
+| `GET` | `/v1/api-keys` | api-keys | Authenticated user | Bearer JWT | `200` | List the user's API keys |
+| `GET` | `/v1/api-keys/{key_id}` | api-keys | Authenticated user | Bearer JWT | `200` | Get API key metadata |
+| `DELETE` | `/v1/api-keys/{key_id}` | api-keys | Authenticated user | Bearer JWT | `200` | Revoke an API key |
+| `GET` | `/v1/protected/geocode/reverse` | — | Protected | Bearer API key | `200` | Single-point reverse geocode |
+| `POST` | `/v1/protected/geocode/reverse/batch` | — | Protected | Bearer API key | `200` | Batch reverse geocode |
+| `GET` | `/v1/geocode/reverse` | — | Legacy protected | `X-API-Key` | `200` | Backward-compatible single-point reverse geocode |
+| `POST` | `/v1/geocode/reverse/batch` | — | Legacy protected | `X-API-Key` | `200` | Backward-compatible batch reverse geocode |
+
+Every endpoint that accepts input can also return `422 Validation Error` (see [Errors](#errors)). Unversioned aliases (`/auth/*`, `/api-keys/*`) behave identically to their `/v1` counterparts.
+
+---
+
+## Geocoding API
+
+### Single-point reverse geocode
+
+`GET /v1/protected/geocode/reverse`
+
+| Parameter | In | Type | Required | Constraints | Description |
+|---|---|---|---|---|---|
+| `lat` | query | number | Yes | `-90` to `90` | Latitude (WGS 84) |
+| `lon` | query | number | Yes | `-180` to `180` | Longitude (WGS 84) |
+| `Authorization` | header | string | Yes (enforced at runtime) | `Bearer <API_KEY>` | API key credential |
+
+```bash
+# Reverse geocode a point (KICC, Nairobi)
+curl "http://localhost:8000/v1/protected/geocode/reverse?lat=-1.2864&lon=36.8172" \
+  -H "Authorization: Bearer locus_live_W7zJ5r4F2qE9kL1p..."
+```
+
+*Response (200 OK) — values are illustrative:*
+```json
+{
+  "county_name": "Nairobi",
+  "constituency": "Starehe",
+  "ward_name": "Nairobi Central",
+  "sub_county_name": "Starehe",
+  "location_name": null,
+  "sub_location": null,
+  "match_type": "exact",
+  "distance_m": 0.0,
+  "boundary_version": "iebc-2024-delimitation"
+}
+```
+
+### Batch reverse geocode
+
+`POST /v1/protected/geocode/reverse/batch`
+
+The request body is a [`BatchGeocodeRequest`](#batchgeocoderequest). The number of points per request is capped at the server-side `MAX_BATCH_SIZE` setting. The response is a JSON **array** of [`GeocodeResponse`](#geocoderesponse) objects.
+
+```bash
+curl -X POST http://localhost:8000/v1/protected/geocode/reverse/batch \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer locus_live_W7zJ5r4F2qE9kL1p..." \
+  -d '{"points": [{"lat": -1.2864, "lon": 36.8172}, {"lat": -4.0435, "lon": 39.6682}]}'
+```
+
+### Legacy endpoints (`X-API-Key`)
+
+`GET /v1/geocode/reverse` and `POST /v1/geocode/reverse/batch` accept the same parameters and bodies and return the same responses, but authenticate with an `X-API-Key` header instead of `Authorization: Bearer`. They are retained for backward compatibility; use the `/v1/protected/...` endpoints for new integrations.
+
+```bash
+curl "http://localhost:8000/v1/geocode/reverse?lat=-1.2864&lon=36.8172" \
+  -H "X-API-Key: locus_live_W7zJ5r4F2qE9kL1p..."
+```
+
+### Match types
+
+| `match_type` | Meaning |
+|---|---|
+| `exact` | The point falls inside a boundary polygon (`ST_Contains`). |
+| `nearest` | No polygon contains the point; the closest boundary within the fallback radius (`ST_DWithin`) is returned. `distance_m` gives the distance in metres. |
+
+---
+
+## Boundaries & Health API
+
+### Boundary version — `GET /v1/boundaries/version`
+
+Returns the active `boundary_version` and its `effective_from` date (nullable).
+
+```bash
+curl http://localhost:8000/v1/boundaries/version
+```
+
+```json
+{
+  "boundary_version": "iebc-2024-delimitation",
+  "effective_from": "2024-01-01"
+}
+```
+
+### Health — `GET /v1/health`
+
+Liveness/readiness probe. Returns `200` with a free-form JSON object once the database and cache are reachable.
+
+```bash
+curl http://localhost:8000/v1/health
+```
+
 ---
 
 ## Self-Service Accounts & API Key Management
@@ -86,14 +248,16 @@ Locus includes a production-ready, self-service account system for user registra
 ### Account Lifecycle Flow
 
 ```
-1. POST /auth/register           → Create unverified account, send verification email
-2. POST /auth/verify-email       → Verify email with single-use token, activate account
-3. POST /auth/login              → Authenticate with email/password, receive JWT access token
-4. POST /api-keys                → Generate API key (raw key returned ONCE only)
-5. GET  /api-keys                → View key metadata (safe prefixes, no secrets)
-6. DELETE /api-keys/{key_id}     → Immediately revoke key
-7. GET  /v1/protected/geocode/.. → Authenticate with Bearer API key
+1. POST   /v1/auth/register          → Create unverified account, send verification email
+2. POST   /v1/auth/verify-email      → Verify email with single-use token, activate account
+3. POST   /v1/auth/login             → Authenticate with email/password, receive JWT access token
+4. POST   /v1/api-keys               → Generate API key (raw key returned ONCE only)
+5. GET    /v1/api-keys               → View key metadata (safe prefixes, no secrets)
+6. DELETE /v1/api-keys/{key_id}      → Immediately revoke key
+7. GET    /v1/protected/geocode/...  → Authenticate with Bearer API key
 ```
+
+> The unversioned paths (`/auth/...`, `/api-keys/...`) are equivalent aliases. Examples below use the versioned form.
 
 ---
 
@@ -101,8 +265,10 @@ Locus includes a production-ready, self-service account system for user registra
 
 #### 1. Register an account
 
+`POST /v1/auth/register` — body: [`RegisterRequest`](#registerrequest)
+
 ```bash
-curl -X POST http://localhost:8000/auth/register \
+curl -X POST http://localhost:8000/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "email": "developer@example.com",
@@ -123,13 +289,15 @@ curl -X POST http://localhost:8000/auth/register \
 
 #### 2. Verify email address
 
+`POST /v1/auth/verify-email` — body: [`VerifyEmailRequest`](#verifyemailrequest)
+
 In development (`EMAIL_PROVIDER=console`), the verification link and token are logged to the console/stdout:
 `[DEV EMAIL] Verification email to developer@example.com: verification link is http://localhost:8000/auth/verify-email?token=<TOKEN>`
 
 Verify the account by submitting the token:
 
 ```bash
-curl -X POST http://localhost:8000/auth/verify-email \
+curl -X POST http://localhost:8000/v1/auth/verify-email \
   -H "Content-Type: application/json" \
   -d '{"token": "<TOKEN_FROM_EMAIL>"}'
 ```
@@ -145,17 +313,24 @@ curl -X POST http://localhost:8000/auth/verify-email \
 }
 ```
 
-*(Optional) Resend verification email:*
+*(Optional) Resend verification email* — `POST /v1/auth/resend-verification`, body: [`ResendVerificationRequest`](#resendverificationrequest):
 ```bash
-curl -X POST http://localhost:8000/auth/resend-verification \
+curl -X POST http://localhost:8000/v1/auth/resend-verification \
   -H "Content-Type: application/json" \
   -d '{"email": "developer@example.com"}'
 ```
 
-#### 3. Sign in (Obtain Access Token)
+This endpoint always returns a generic [`MessageResponse`](#messageresponse) to prevent account enumeration:
+```json
+{ "message": "<generic confirmation message>" }
+```
+
+#### 3. Sign in (obtain access token)
+
+`POST /v1/auth/login` — body: [`LoginRequest`](#loginrequest)
 
 ```bash
-curl -X POST http://localhost:8000/auth/login \
+curl -X POST http://localhost:8000/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "developer@example.com",
@@ -172,12 +347,23 @@ curl -X POST http://localhost:8000/auth/login \
 }
 ```
 
-#### 4. Generate an API Key
+#### 3a. View your profile
+
+`GET /v1/auth/me` — returns a [`UserResponse`](#userresponse).
+
+```bash
+curl http://localhost:8000/v1/auth/me \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+#### 4. Generate an API key
+
+`POST /v1/api-keys` — body: [`CreateAPIKeyRequest`](#createapikeyrequest)
 
 > **Important Security Notice**: The raw key secret (`key`) is returned **only once**, immediately after creation. It is never stored in plaintext and cannot be recovered later. Store it securely.
 
 ```bash
-curl -X POST http://localhost:8000/api-keys \
+curl -X POST http://localhost:8000/v1/api-keys \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <ACCESS_TOKEN>" \
   -d '{
@@ -186,7 +372,7 @@ curl -X POST http://localhost:8000/api-keys \
   }'
 ```
 
-*Response (201 Created):*
+*Response (201 Created):* [`CreatedAPIKeyResponse`](#createdapikeyresponse)
 ```json
 {
   "id": "e81d43a6-d069-424a-95ee-d0ebf8d42d65",
@@ -198,12 +384,12 @@ curl -X POST http://localhost:8000/api-keys \
 }
 ```
 
-#### 5. List Your API Keys
+#### 5. List your API keys
 
-List all keys belonging to your account. Only safe non-secret metadata is returned:
+`GET /v1/api-keys` — returns an array of [`APIKeyResponse`](#apikeyresponse). Only safe, non-secret metadata is returned:
 
 ```bash
-curl http://localhost:8000/api-keys \
+curl http://localhost:8000/v1/api-keys \
   -H "Authorization: Bearer <ACCESS_TOKEN>"
 ```
 
@@ -222,12 +408,21 @@ curl http://localhost:8000/api-keys \
 ]
 ```
 
-#### 6. Revoke an API Key
+#### 5a. Get a single key's metadata
 
-Revocation takes effect immediately in the database:
+`GET /v1/api-keys/{key_id}` — `key_id` must be a UUID. Returns an [`APIKeyResponse`](#apikeyresponse).
 
 ```bash
-curl -X DELETE http://localhost:8000/api-keys/e81d43a6-d069-424a-95ee-d0ebf8d42d65 \
+curl http://localhost:8000/v1/api-keys/e81d43a6-d069-424a-95ee-d0ebf8d42d65 \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+#### 6. Revoke an API key
+
+`DELETE /v1/api-keys/{key_id}` — revocation is permanent and takes effect immediately:
+
+```bash
+curl -X DELETE http://localhost:8000/v1/api-keys/e81d43a6-d069-424a-95ee-d0ebf8d42d65 \
   -H "Authorization: Bearer <ACCESS_TOKEN>"
 ```
 
@@ -246,53 +441,180 @@ curl -X DELETE http://localhost:8000/api-keys/e81d43a6-d069-424a-95ee-d0ebf8d42d
 
 ---
 
-### Authenticating Requests to Protected Endpoints
+## Schema Reference
 
-Protected endpoints require a valid API key passed in the standard `Authorization` header:
+All request and response bodies are JSON. Fields marked **required** must be present; nullable fields may be `null` or omitted where the schema allows.
 
-```bash
-# Reverse geocode a point (KICC, Nairobi)
-curl "http://localhost:8000/v1/protected/geocode/reverse?lat=-1.2864&lon=36.8172" \
-  -H "Authorization: Bearer locus_live_W7zJ5r4F2qE9kL1p..."
+### Request schemas
 
-# Batch reverse geocode
-curl -X POST http://localhost:8000/v1/protected/geocode/reverse/batch \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer locus_live_W7zJ5r4F2qE9kL1p..." \
-  -d '{"points": [{"lat": -1.2864, "lon": 36.8172}]}'
+#### RegisterRequest
+
+| Field | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `email` | string | Yes | — | User's email address |
+| `password` | string | Yes | 8–128 characters | User password |
+
+#### LoginRequest
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `email` | string | Yes | User's email address |
+| `password` | string | Yes | User's password |
+
+#### VerifyEmailRequest
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `token` | string | Yes | Cryptographically secure verification token |
+
+#### ResendVerificationRequest
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `email` | string | Yes | Registered email address |
+
+#### CreateAPIKeyRequest
+
+| Field | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `name` | string | Yes | 1–100 characters | Human-readable name for the API key |
+| `expires_in_days` | integer \| null | No | 1–365 | Optional lifetime in days; omit or `null` for no expiry |
+
+#### GeocodeRequest
+
+| Field | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `lat` | number | Yes | -90 to 90 | Latitude (WGS 84) |
+| `lon` | number | Yes | -180 to 180 | Longitude (WGS 84) |
+
+#### BatchGeocodeRequest
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `points` | array of [`GeocodeRequest`](#geocoderequest) | Yes | Points to geocode (capped at `MAX_BATCH_SIZE`) |
+
+### Response schemas
+
+#### GeocodeResponse
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `county_name` | string | Yes | County |
+| `constituency` | string | Yes | Constituency |
+| `ward_name` | string | Yes | Ward |
+| `sub_county_name` | string \| null | No | Sub-County |
+| `location_name` | string \| null | No | Location |
+| `sub_location` | string \| null | No | Sub-Location |
+| `match_type` | `"exact"` \| `"nearest"` | Yes | How the boundary was matched (see [Match types](#match-types)) |
+| `distance_m` | number | Yes | Distance in metres from the point to the matched boundary |
+| `boundary_version` | string | Yes | Boundary dataset version used for the match |
+
+#### VersionResponse
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `boundary_version` | string | Yes | Active boundary version |
+| `effective_from` | date (`YYYY-MM-DD`) \| null | No | Date the version took effect |
+
+#### UserResponse
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | string (UUID) | Yes | User ID |
+| `email` | string | Yes | Email address |
+| `is_active` | boolean | Yes | Whether the account is active |
+| `is_verified` | boolean | Yes | Whether the email has been verified |
+| `created_at` | string (date-time) | Yes | Account creation time |
+
+#### TokenResponse
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `access_token` | string | Yes | JWT access token |
+| `token_type` | string | No | Always `bearer` (default) |
+| `expires_in` | integer | Yes | Token lifetime in seconds |
+
+#### APIKeyResponse
+
+Safe metadata representation of an API key (never exposes the key or its hash).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | string (UUID) | Yes | Key ID |
+| `name` | string | Yes | Human-readable name |
+| `key_prefix` | string | Yes | Non-secret prefix for recognition (e.g. `locus_live_W7zJ`) |
+| `created_at` | string (date-time) | Yes | Creation time |
+| `expires_at` | string (date-time) \| null | No | Expiry time, if any |
+| `revoked_at` | string (date-time) \| null | No | Revocation time, if revoked |
+| `is_active` | boolean | Yes | Whether the key is currently usable |
+
+#### CreatedAPIKeyResponse
+
+Returned immediately after creation. Contains the raw key **once only**.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | string (UUID) | Yes | Key ID |
+| `name` | string | Yes | Human-readable name |
+| `key` | string | Yes | **Raw API key secret — shown only once** |
+| `key_prefix` | string | Yes | Non-secret prefix |
+| `created_at` | string (date-time) | Yes | Creation time |
+| `expires_at` | string (date-time) \| null | No | Expiry time, if any |
+
+#### MessageResponse
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `message` | string | Yes | Human-readable message |
+
+---
+
+## Errors
+
+Request validation failures return **`422 Unprocessable Entity`** with an `HTTPValidationError` body:
+
+```json
+{
+  "detail": [
+    {
+      "loc": ["query", "lat"],
+      "msg": "Input should be less than or equal to 90",
+      "type": "less_than_equal",
+      "input": "123",
+      "ctx": { "le": 90 }
+    }
+  ]
+}
 ```
 
-#### Endpoint Access Policy
+| Field | Type | Description |
+|---|---|---|
+| `detail[].loc` | array of string \| integer | Location of the error (e.g. `["query", "lat"]`) |
+| `detail[].msg` | string | Human-readable message |
+| `detail[].type` | string | Machine-readable error type |
+| `detail[].input` | any | The offending input (optional) |
+| `detail[].ctx` | object | Additional context (optional) |
 
-| Endpoint | Access | Required Authentication | Description |
-|---|---|---|---|
-| `GET /v1/health` | Public | None | Liveness/readiness probe |
-| `GET /v1/boundaries/version` | Public | None | Active boundary version |
-| `POST /auth/register` | Public (Rate-limited) | None | Create account |
-| `POST /auth/verify-email` | Public | None | Confirm email verification token |
-| `POST /auth/resend-verification` | Public (Rate-limited) | None | Resend verification token |
-| `POST /auth/login` | Public (Rate-limited) | None | Login with email & password |
-| `GET /auth/me` | Authenticated User | `Authorization: Bearer <JWT>` | View user profile |
-| `POST /api-keys` | Authenticated User | `Authorization: Bearer <JWT>` | Create an API key |
-| `GET /api-keys` | Authenticated User | `Authorization: Bearer <JWT>` | List user's API keys |
-| `GET /api-keys/{id}` | Authenticated User | `Authorization: Bearer <JWT>` | Get key metadata |
-| `DELETE /api-keys/{id}` | Authenticated User | `Authorization: Bearer <JWT>` | Revoke an API key |
-| `GET /v1/protected/geocode/reverse` | Protected | `Authorization: Bearer <API_KEY>` | Reverse geocode point |
-| `POST /v1/protected/geocode/reverse/batch` | Protected | `Authorization: Bearer <API_KEY>` | Batch reverse geocode |
-| `GET /v1/geocode/reverse` | Legacy Protected | `X-API-Key: <KEY>` | Backward-compatible reverse geocode |
-| `POST /v1/geocode/reverse/batch` | Legacy Protected | `X-API-Key: <KEY>` | Backward-compatible batch reverse geocode |
+Other status codes returned at runtime (not enumerated in the OpenAPI document):
+
+| Status | When |
+|---|---|
+| `401` / `403` | Missing, invalid, expired, or revoked credentials; unverified accounts exceeding the trial limit (see [Security Model](#security-model)) |
+| `404` | API key ID not found or owned by another user |
+| `429` | Rate limit exceeded |
 
 ---
 
 ## Security Model
 
-1. **Password Hashing**: Passwords are hashed using **Argon2id** (`argon2-cffi`), configured with `time_cost=3`, `memory_cost=64 MiB`, and `parallelism=4`. Plaintext passwords are never stored or logged.
+1. **Password Hashing**: Passwords are hashed using **Argon2id** (`argon2-cffi`), configured with `time_cost=3`, `memory_cost=64 MiB`, and `parallelism=4`. Plaintext passwords are never stored or logged. Accepted password length is 8–128 characters.
 2. **API Key Generation & Storage**:
    - Generated using Python's `secrets.token_urlsafe(32)` providing 256 bits of cryptographic entropy.
    - Prepended with a recognizable identifier prefix: `locus_live_`.
    - Stored exclusively as a **SHA-256 cryptographic hash** (`key_hash`).
    - The raw key is returned **only once** at creation and is never logged or displayed again.
    - Non-secret prefixes (e.g. `locus_live_abcd`) are stored for display and human recognition.
+   - Optional expiry of 1–365 days; revocation is permanent and immediate.
 3. **Email Verification & Unverified Trial Policy**:
    - Verification tokens are high-entropy single-use tokens generated with `secrets`.
    - Stored as SHA-256 hashes in `email_verification_tokens`.
@@ -303,7 +625,7 @@ curl -X POST http://localhost:8000/v1/protected/geocode/reverse/batch \
    - Once verified, the request count limit is removed and full access is granted.
 4. **Session / Access Tokens**:
    - JWTs signed using HMAC-SHA256 (HS256) with environment-configured `SECRET_KEY`.
-   - Short expiration window (default 60 minutes).
+   - Short expiration window (default 60 minutes, reported via `expires_in`).
    - API keys cannot be used to manage user login credentials or alter account state.
 5. **Anti-Enumeration Protections**:
    - Resend verification requests always return a uniform confirmation message.
@@ -349,6 +671,8 @@ uv run python -m locus.pipeline.publish \
     --boundary-version iebc-2024-delimitation
 ```
 
+The published `--boundary-version` is what the API reports in `GET /v1/boundaries/version` and in the `boundary_version` field of every geocode response.
+
 ---
 
 ## Running Tests
@@ -391,8 +715,8 @@ locus/                          # Python package
 ├── security.py                 # Argon2id hashing, SHA-256 tokens, HS256 JWT
 ├── api/
 │   ├── routes.py               # Geocoding endpoints (public & protected)
-│   ├── auth_routes.py          # /auth registration, verification, login, me
-│   ├── api_key_routes.py       # /api-keys creation, listing, revocation
+│   ├── auth_routes.py          # /auth + /v1/auth registration, verification, login, me
+│   ├── api_key_routes.py       # /api-keys + /v1/api-keys creation, listing, revocation
 │   ├── schemas.py              # Pydantic request/response models
 │   └── dependencies.py         # Auth, rate limiting, service wiring
 ├── domain/
