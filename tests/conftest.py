@@ -10,6 +10,7 @@ def sample_row() -> dict:
         "county_name": "Nairobi",
         "constituency": "Starehe",
         "ward_name": "Nairobi Central",
+        "sub_county_name": None,
         "location_name": "Nairobi Central",
         "sub_location": "KICC",
         "boundary_version": "iebc-2024",

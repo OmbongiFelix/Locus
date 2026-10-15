@@ -5,6 +5,7 @@ description = "Reverse-geocode any lat/lon to Kenya's County, Constituency, Ward
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "argon2-cffi>=25.1.0",
     "asyncpg>=0.31.0",
     "fastapi>=0.141.1",
     "fiona>=1.10.1",

@@ -41,6 +41,23 @@ class Settings(BaseSettings):
     CACHE_TTL_SECONDS: int = 3600  # 1 hour default
     CACHE_MISS_TTL_SECONDS: int = 60  # short TTL for misses
 
+    # Auth & Security
+    SECRET_KEY: str = "locus-insecure-dev-secret-key-change-in-production-12345678"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    VERIFICATION_TOKEN_EXPIRE_HOURS: int = 24
+    AUTH_RATE_LIMIT_PER_MINUTE: int = 10
+    MAX_UNVERIFIED_REQUESTS: int = 5
+
+    # Email provider settings ("console", "mock", "smtp")
+    EMAIL_PROVIDER: str = "console"
+    SMTP_HOST: str = "localhost"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = "noreply@locus.co.ke"
+    SMTP_TLS: bool = True
+    APP_URL: str = "http://localhost:8000"
+
     model_config = {
     "env_file": ".env",
     "env_file_encoding": "utf-8",
@@ -52,115 +69,3 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return the cached Settings singleton.  Import this, not Settings."""
     return Settings()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-r"""
-# command hierarchy if containers exist
-1.1 docker compose restart
-1.2 docker compose ps  # to check on them
-
-# command hierarchy if containers are not yet created
-1. docker compose up -d
-2. docker compose ps  # check health of containers
-3. docker compose exec -T postgres psql -U app_user -d app_db < migrations/001_initial_schema.sql
-4. uv run python -m locus.pipeline.ingest --source "C:\Users\fombo\OneDrive\Desktop\Antler\Geo-add\Data\others\gadm41_KEN.gpkg" --layer ADM_ADM_3 --source-dataset GADM --boundary-version gadm41-ken-2022
-5.1 uv run python -m locus.pipeline.publish --boundary-version gadm41-ken-2022
-5.2 uv run python -m locus.pipeline.publish --boundary-version gadm41-ken-2022 --skip-validation
-6. uv run uvicorn locus.main:app --reload
-
-# .env file example:
-
-POSTGRES_DB=app_db
-POSTGRES_USER=app_user
-POSTGRES_PASSWORD=visADSC3pSuTCKQzvS9F
-DATABASE_URL=postgresql://app_user:visADSC3pSuTCKQzvS9F@localhost:5432/app_db
-REDIS_URL=redis://:N2zfdqRFouRNDDSATrRt@localhost:6379/0
-REDIS_PASSWORD=N2zfdqRFouRNDDSATrRt
-"""

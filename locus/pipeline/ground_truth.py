@@ -32,6 +32,17 @@ LANDMARKS: list[Landmark] = [
         expected_county="Nairobi",
         expected_constituency="Starehe",
     ),
+    # TODO: "Mvita" is confirmed wrong (no source supports it) but not
+    # yet replaced. wards.shp places this point ~240m inside Jomvu/
+    # Miritini — solidly interior, not a boundary sliver — but
+    # Changamwe's own ward list ("Airport" ward, under Port Reitz
+    # sub-location) is well-corroborated too. The Jomvu/Changamwe line
+    # near Miritini was the subject of a 2012 High Court boundary
+    # ruling, so this may be a genuinely contested area rather than a
+    # simple error. Before resolving: get a verified coordinate for
+    # the airport terminal specifically (this lat/lon is several
+    # hundred metres from Port Reitz's own commonly-cited coordinates)
+    # and re-run the boundary-distance check against that.
     Landmark(
         name="Moi International Airport, Mombasa",
         lat=-4.0348,
@@ -44,14 +55,19 @@ LANDMARKS: list[Landmark] = [
         lat=-0.0862,
         lon=34.7289,
         expected_county="Kisumu",
-        expected_constituency="Kisumu Central",
+        expected_constituency="Kisumu West",
     ),
+    # Kapseret/Kipkenyo, ~451m inside — Kipkenyo ward was part of the
+    # old pre-2012 "Eldoret South" constituency, which dissolved mostly
+    # into Kesses (56%) and Kapseret (39%) in the 2012 delimitation.
+    # Kapseret getting the larger share is consistent with this result.
+    # "Ainabkoi" (prior value) had no support from any source checked.
     Landmark(
         name="Eldoret Town Centre",
         lat=0.5143,
         lon=35.2698,
         expected_county="Uasin Gishu",
-        expected_constituency="Ainabkoi",
+        expected_constituency="Kapseret",
     ),
     Landmark(
         name="Nakuru Town Hall",
